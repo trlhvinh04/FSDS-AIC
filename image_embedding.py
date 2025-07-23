@@ -17,25 +17,6 @@ SAVE_EMB_PATH = "clip_embeds.npy"
 SAVE_PATHS_PATH = "clip_paths.txt"
 SAVE_FAISS_PATH = "clip_faiss.index"
 
-# ================= CLIP BACKBONE COMPARISON =================
-# | Backbone        | VRAM (batch=64) | Latency/query* | Speed (imgs/s) | R@1** | R@5** |
-# |-----------------|-----------------|----------------|----------------|-------|-------|
-# | RN50            | ~1.5 GB         | ~6-8 ms        | ~700-800       | 25-30%| 50-55%|
-# | RN101           | ~2.0 GB         | ~7-10 ms       | ~500-600       | 27-32%| 52-57%|
-# | RN50x4          | ~3.5 GB         | ~9-12 ms       | ~350-400       | 30-35%| 55-60%|
-# | RN50x16         | ~6.5 GB         | ~12-15 ms      | ~200-250       | 32-37%| 57-63%|
-# | RN50x64         | ~14 GB          | ~18-22 ms      | ~80-100        | 34-40%| 60-65%|
-# | ViT-B/32        | ~1.2 GB         | ~5-6 ms        | ~850-950       | 30-35%| 58-63%|
-# | ViT-B/16        | ~2.5 GB         | ~6-8 ms        | ~600-700       | 32-37%| 60-65%|
-# | ViT-L/14        | ~5.5 GB         | ~8-11 ms       | ~350-400       | 35-40%| 62-67%|
-# | ViT-L/14@336px  | ~11-12 GB       | ~12-15 ms      | ~180-220       | 37-42%| 64-70%|
-# ------------------------------------------------------------
-# * Latency/query: Thời gian trung bình encode 1 query (ảnh hoặc text) trên GPU RTX 3090.
-# * R@K (R@1, R@5): ước lượng từ benchmark zero-shot trên ImageNet và retrieval datasets.
-# Speed (imgs/s): tốc độ encode ảnh (forward pass) batch-size ~64.
-# =============================================================
-
-
 def get_base_dir_from_kaggle(dataset_id: str) -> str:
     """
     Download dataset via kagglehub and try to find the keyframes root.
