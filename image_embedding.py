@@ -9,10 +9,6 @@ from PIL import Image, UnidentifiedImageError
 import faiss
 import kagglehub 
 
-
-# =========================
-# Config chung
-# =========================
 BATCH_SIZE = 64
 USE_GPU_FAISS = True
 FAISS_GPU_ID = 0
@@ -21,16 +17,30 @@ SAVE_EMB_PATH = "clip_embeds.npy"
 SAVE_PATHS_PATH = "clip_paths.txt"
 SAVE_FAISS_PATH = "clip_faiss.index"
 
+# ================= CLIP BACKBONE COMPARISON =================
+# | Backbone        | VRAM (batch=64) | Latency/query* | Speed (imgs/s) | R@1** | R@5** |
+# |-----------------|-----------------|----------------|----------------|-------|-------|
+# | RN50            | ~1.5 GB         | ~6-8 ms        | ~700-800       | 25-30%| 50-55%|
+# | RN101           | ~2.0 GB         | ~7-10 ms       | ~500-600       | 27-32%| 52-57%|
+# | RN50x4          | ~3.5 GB         | ~9-12 ms       | ~350-400       | 30-35%| 55-60%|
+# | RN50x16         | ~6.5 GB         | ~12-15 ms      | ~200-250       | 32-37%| 57-63%|
+# | RN50x64         | ~14 GB          | ~18-22 ms      | ~80-100        | 34-40%| 60-65%|
+# | ViT-B/32        | ~1.2 GB         | ~5-6 ms        | ~850-950       | 30-35%| 58-63%|
+# | ViT-B/16        | ~2.5 GB         | ~6-8 ms        | ~600-700       | 32-37%| 60-65%|
+# | ViT-L/14        | ~5.5 GB         | ~8-11 ms       | ~350-400       | 35-40%| 62-67%|
+# | ViT-L/14@336px  | ~11-12 GB       | ~12-15 ms      | ~180-220       | 37-42%| 64-70%|
+# ------------------------------------------------------------
+# * Latency/query: Thời gian trung bình encode 1 query (ảnh hoặc text) trên GPU RTX 3090.
+# * R@K (R@1, R@5): ước lượng từ benchmark zero-shot trên ImageNet và retrieval datasets.
+# Speed (imgs/s): tốc độ encode ảnh (forward pass) batch-size ~64.
+# =============================================================
 
-# =========================
-# 1. Download Kaggle dataset & auto BASE_DIR
-# =========================
+
 def get_base_dir_from_kaggle(dataset_id: str) -> str:
     """
     Download dataset via kagglehub and try to find the keyframes root.
     """
     root = kagglehub.dataset_download(dataset_id)
-    # Try common subpaths; if not found, fall back to root
     candidates = [
         os.path.join(root, "version", "1", "keyframes"),
         os.path.join(root, "keyframes"),
@@ -38,19 +48,13 @@ def get_base_dir_from_kaggle(dataset_id: str) -> str:
     ]
     for c in candidates:
         if os.path.isdir(c):
-            # does it contain L06_V* dirs?
             if glob.glob(os.path.join(c, "L06_V*")):
                 return c
-    # last resort: pick the deepest path that has L06_V*
     matches = glob.glob(os.path.join(root, "**", "L06_V*"), recursive=True)
     if matches:
         return os.path.dirname(matches[0])
     return root
 
-
-# =========================
-# 2. Thu thập ảnh
-# =========================
 def collect_image_paths(base_dir: str,
                         patterns=("*.jpg", "*.jpeg", "*.png"),
                         recursive=True) -> List[str]:
@@ -61,19 +65,11 @@ def collect_image_paths(base_dir: str,
     out.sort()
     return out
 
-
-# =========================
-# 3. Load CLIP
-# =========================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(">>> Using device:", device)
-model, preprocess = clip.load("ViT-B/32", device=device)
+model, preprocess = clip.load("ViT-L/14@336px", device=device) # Hoặc là dùng "RN50", "RN101", "RN50x4", "RN50x16", "RN50x64", "ViT-L/14", "ViT-B/16", "ViT-B/32", "ViT-L/14@336px"
 model.eval()
 
-
-# =========================
-# 4. Embed ảnh (batch)
-# =========================
 def embed_images_batch(paths: List[str],
                        batch_size: int = 64,
                        device: str = device) -> np.ndarray:
@@ -106,9 +102,6 @@ def embed_images_batch(paths: List[str],
     return embs, valid_paths
 
 
-# =========================
-# 5. Embed text
-# =========================
 def embed_text(text: str, device: str = device) -> np.ndarray:
     toks = clip.tokenize([text]).to(device)
     with torch.no_grad():
@@ -116,10 +109,6 @@ def embed_text(text: str, device: str = device) -> np.ndarray:
         f = f / f.norm(dim=-1, keepdim=True)
     return f.cpu().numpy().astype(np.float32).squeeze(0)  # (512,)
 
-
-# =========================
-# 6. FAISS helpers
-# =========================
 def build_faiss_cpu(embs: np.ndarray) -> faiss.Index:
     dim = embs.shape[1]
     idx = faiss.IndexFlatIP(dim)  # cosine (vectors normalized)
@@ -136,9 +125,6 @@ def maybe_to_gpu(index_cpu: faiss.Index,
     return index_cpu
 
 
-# =========================
-# 7. Save / Load
-# =========================
 def save_embeddings(embs: np.ndarray,
                     paths: List[str],
                     emb_path: str = SAVE_EMB_PATH,
@@ -168,10 +154,6 @@ def load_embeddings(emb_path: str = SAVE_EMB_PATH,
     idx = maybe_to_gpu(idx_cpu, use_gpu, gpu_id)
     return embs, paths, idx
 
-
-# =========================
-# 8. Search
-# =========================
 def make_search_fn(index, image_paths: List[str]):
     """
     Trả về hàm search_text() đóng gói index + paths.
@@ -186,49 +168,44 @@ def make_search_fn(index, image_paths: List[str]):
         return results
     return search_text
 
-
-# =========================
-# 9. Main demo
-# =========================
 if __name__ == "__main__":
     # ---- tải dataset Kaggle ----
-    # VD: "phucnguyenchau/keyframes-l06"
     DATASET_ID = "phucnguyenchau/keyframes-l06"
-    print(f"[INFO] Đang tải dataset Kaggle: {DATASET_ID}")
+    print(f"[INFO] Loading dataset: {DATASET_ID}")
     path = kagglehub.dataset_download(DATASET_ID)
-    print(f"[INFO] Kaggle local path: {path}")
+    # print(f"[INFO] Kaggle local path: {path}")
 
     # ---- xác định BASE_DIR chứa L06_Vxxx ----
     BASE_DIR = get_base_dir_from_kaggle(DATASET_ID)
-    print(f"[INFO] BASE_DIR sử dụng: {BASE_DIR}")
+    print(f"[INFO] Found dataset: {BASE_DIR}")
 
     # ---- thu thập ảnh ----
     image_paths = collect_image_paths(BASE_DIR)
-    print(f"[INFO] Tổng số ảnh tìm thấy: {len(image_paths)}")
+    print(f"[INFO] Total image found: {len(image_paths)}")
     if not image_paths:
-        raise FileNotFoundError("Không tìm thấy ảnh nào! Kiểm tra cấu trúc dataset.")
+        raise FileNotFoundError("No image found")
 
     # ---- embed ảnh ----
-    print("[INFO] Đang embed ảnh bằng CLIP...")
+    print("[INFO] Embedding images with CLIP...")
     embs, image_paths = embed_images_batch(image_paths, BATCH_SIZE, device)
     print(f"[INFO] Embedding shape: {embs.shape}")  # (N,512)
 
     # ---- build FAISS ----
     index_cpu = build_faiss_cpu(embs)
-    print(f"[INFO] FAISS CPU index chứa {index_cpu.ntotal} vector.")
+    print(f"[INFO] FAISS CPU index contains {index_cpu.ntotal} vectors.")
 
     index = maybe_to_gpu(index_cpu, USE_GPU_FAISS, FAISS_GPU_ID)
     if index is not index_cpu:
-        print("[INFO] FAISS index đã chuyển lên GPU.")
+        print("[INFO] FAISS index has been moved to GPU.")
     else:
-        print("[INFO] Dùng FAISS CPU index.")
+        print("[INFO] Using FAISS CPU index.")
 
     # ---- lưu (optional) ----
-    # save_embeddings(embs, image_paths, index_cpu_obj=index_cpu)
+    save_embeddings(embs, image_paths, index_cpu_obj=index_cpu)
 
     # ---- search demo ----
     search_text = make_search_fn(index, image_paths)
-    query = "a busy street with cars"
+    query = "một chiếc xe ô tô màu đỏ đang dừng bên lề đường"
     results = search_text(query, topk=5)
     print(f"\n[RESULT] Query: {query!r}")
     for path_i, score in results:
